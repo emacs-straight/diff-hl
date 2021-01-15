@@ -1,11 +1,11 @@
 ;;; diff-hl.el --- Highlight uncommitted changes using VC -*- lexical-binding: t -*-
 
-;; Copyright (C) 2012-2019  Free Software Foundation, Inc.
+;; Copyright (C) 2012-2020  Free Software Foundation, Inc.
 
 ;; Author:   Dmitry Gutov <dgutov@yandex.ru>
 ;; URL:      https://github.com/dgutov/diff-hl
 ;; Keywords: vc, diff
-;; Version:  1.8.7
+;; Version:  1.8.8
 ;; Package-Requires: ((cl-lib "0.2") (emacs "24.3"))
 
 ;; This file is part of GNU Emacs.
@@ -35,6 +35,8 @@
 ;; `diff-hl-revert-hunk'     C-x v n
 ;; `diff-hl-previous-hunk'   C-x v [
 ;; `diff-hl-next-hunk'       C-x v ]
+;; `diff-hl-set-reference-rev'
+;; `diff-hl-reset-reference-rev'
 ;;
 ;; The mode takes advantage of `smartrep' if it is installed.
 
@@ -55,6 +57,8 @@
 (require 'diff-mode)
 (require 'vc)
 (require 'vc-dir)
+(require 'log-view)
+
 (eval-when-compile
   (require 'cl-lib)
   (require 'vc-git)
@@ -97,6 +101,11 @@
   :group 'diff-hl
   :type 'boolean)
 
+(defcustom diff-hl-ask-before-revert-hunk t
+  "Non-nil to ask for confirmation before revert a hunk."
+  :group 'diff-hl
+  :type 'boolean)
+
 (defcustom diff-hl-highlight-function 'diff-hl-highlight-on-fringe
   "Function to highlight the current line. Its arguments are
   overlay, change type and position within a hunk."
@@ -136,6 +145,26 @@ the end position as its only argument."
                  (const :tag "Highlight the first column"
                         diff-hl-revert-highlight-first-column)))
 
+(defcustom diff-hl-global-modes '(not image-mode)
+  "Modes for which `diff-hl-mode' is automagically turned on.
+This affects the behavior of `global-diff-hl-mode'.
+If nil, no modes have `diff-hl-mode' automatically turned on.
+If t, all modes have `diff-hl-mode' enabled.
+If a list, it should be a list of `major-mode' symbol names for
+which it should be automatically turned on. The sense of the list
+is negated if it begins with `not'. As such, the default value
+ (not image-mode)
+means that `diff-hl-mode' is turned on in all modes except for
+`image-mode' buffers. Previously, `diff-hl-mode' caused worse
+performance when viewing such files in certain conditions."
+  :type '(choice (const :tag "none" nil)
+                 (const :tag "all" t)
+                 (set :menu-tag "mode specific" :tag "modes"
+                      :value (not)
+                      (const :tag "Except" not)
+                      (repeat :inline t (symbol :tag "mode"))))
+  :group 'diff-hl)
+
 (defvar diff-hl-reference-revision nil
   "Revision to diff against.  nil means the most recent one.")
 
@@ -151,6 +180,7 @@ the end position as its only argument."
                  spacing)))
          (w (min (frame-parameter nil (intern (format "%s-fringe" diff-hl-side)))
                  16))
+         (_ (when (zerop w) (setq w 16)))
          (middle (make-vector h (expt 2 (1- w))))
          (ones (1- (expt 2 w)))
          (top (copy-sequence middle))
@@ -240,7 +270,7 @@ the end position as its only argument."
      ,body))
 
 (defun diff-hl-modified-p (state)
-  (or (eq state 'edited)
+  (or (memq state '(edited conflict))
       (and (eq state 'up-to-date)
            ;; VC state is stale in after-revert-hook.
            (or revert-buffer-in-progress-p
@@ -332,6 +362,15 @@ the end position as its only argument."
                 (overlay-put h 'insert-in-front-hooks hook)
                 (overlay-put h 'insert-behind-hooks hook)))))))))
 
+(defvar-local diff-hl--modified-tick nil)
+
+(put 'diff-hl--modified-tick 'permanent-local t)
+
+(defun diff-hl-update-once ()
+  (unless (equal diff-hl--modified-tick (buffer-chars-modified-tick))
+    (diff-hl-update)
+    (setq diff-hl--modified-tick (buffer-chars-modified-tick))))
+
 (defun diff-hl-add-highlighting (type shape)
   (let ((o (make-overlay (point) (point))))
     (overlay-put o 'diff-hl t)
@@ -370,9 +409,12 @@ the end position as its only argument."
     (unless (buffer-modified-p)
       (diff-hl-update))))
 
-(defun diff-hl-diff-goto-hunk ()
-  "Run VC diff command and go to the line corresponding to the current."
-  (interactive)
+(defun diff-hl-after-revert ()
+  (defvar revert-buffer-preserve-modes)
+  (when revert-buffer-preserve-modes
+    (diff-hl-update)))
+
+(defun diff-hl-diff-goto-hunk-1 ()
   (vc-buffer-sync)
   (let* ((line (line-number-at-pos))
          (buffer (current-buffer)))
@@ -381,6 +423,12 @@ the end position as its only argument."
                         (with-current-buffer ,buffer (diff-hl-remove-overlays))
                       (diff-hl-diff-skip-to ,line)
                       (setq vc-sentinel-movepoint (point))))))
+
+(defun diff-hl-diff-goto-hunk ()
+  "Run VC diff command and go to the line corresponding to the current."
+  (interactive)
+  (with-current-buffer (or (buffer-base-buffer) (current-buffer))
+    (diff-hl-diff-goto-hunk-1)))
 
 (defun diff-hl-diff-skip-to (line)
   "In `diff-mode', skip to the hunk and line corresponding to LINE
@@ -415,9 +463,7 @@ in the source file, or the last line of the hunk above it."
                                          'diff-hl-reverted-hunk-highlight)
         (forward-line 1)))))
 
-(defun diff-hl-revert-hunk ()
-  "Revert the diff hunk with changes at or above the point."
-  (interactive)
+(defun diff-hl-revert-hunk-1 ()
   (save-restriction
     (widen)
     (vc-buffer-sync)
@@ -457,15 +503,23 @@ in the source file, or the last line of the hunk above it."
                     (recenter 1)))
                 (when diff-auto-refine-mode
                   (diff-refine-hunk))
-                (unless (yes-or-no-p (format "Revert current hunk in %s? "
-                                             ,(cl-caadr fileset)))
-                  (user-error "Revert canceled"))
+                (if diff-hl-ask-before-revert-hunk
+                    (unless (yes-or-no-p (format "Revert current hunk in %s? "
+                                                 ,(cl-caadr fileset)))
+                      (user-error "Revert canceled")))
                 (let ((diff-advance-after-apply-hunk nil))
-                  (diff-apply-hunk t))
+                  (save-window-excursion
+                    (diff-apply-hunk t)))
                 (with-current-buffer ,buffer
                   (save-buffer))
                 (message "Hunk reverted"))))
         (quit-windows-on diff-buffer t)))))
+
+(defun diff-hl-revert-hunk ()
+  "Revert the diff hunk with changes at or above the point."
+  (interactive)
+  (with-current-buffer (or (buffer-base-buffer) (current-buffer))
+    (diff-hl-revert-hunk-1)))
 
 (defun diff-hl-hunk-overlay-at (pos)
   (cl-loop for o in (overlays-in pos (1+ pos))
@@ -535,16 +589,16 @@ The value of this variable is a mode line template as in
                     ;; let's wait until the state information is
                     ;; saved, in order not to fetch it twice.
                     'find-file-hook)
-                  'diff-hl-update t t)
+                  'diff-hl-update-once t t)
         (add-hook 'vc-checkin-hook 'diff-hl-update nil t)
-        (add-hook 'after-revert-hook 'diff-hl-update nil t)
+        (add-hook 'after-revert-hook 'diff-hl-after-revert nil t)
         ;; Magit does call `auto-revert-handler', but it usually
         ;; doesn't do much, because `buffer-stale--default-function'
         ;; doesn't care about changed VC state.
         ;; https://github.com/magit/magit/issues/603
         (add-hook 'magit-revert-buffer-hook 'diff-hl-update nil t)
         ;; Magit versions 2.0-2.3 don't do the above and call this
-        ;; instead, but only when they dosn't call `revert-buffer':
+        ;; instead, but only when they don't call `revert-buffer':
         (add-hook 'magit-not-reverted-hook 'diff-hl-update nil t)
         (add-hook 'text-scale-mode-hook 'diff-hl-maybe-redefine-bitmaps nil t))
     (remove-hook 'after-save-hook 'diff-hl-update t)
@@ -573,12 +627,22 @@ The value of this variable is a mode line template as in
 (declare-function magit-toplevel "magit-git")
 (declare-function magit-unstaged-files "magit-git")
 
+(defvar diff-hl--magit-unstaged-files nil)
+
+(defun diff-hl-magit-pre-refresh ()
+  (setq diff-hl--magit-unstaged-files (magit-unstaged-files t)))
+
 (defun diff-hl-magit-post-refresh ()
   (let* ((topdir (magit-toplevel))
          (modified-files
           (mapcar (lambda (file) (expand-file-name file topdir))
-                  (magit-unstaged-files t)))
+                  (delete-consecutive-dups
+                   (sort
+                    (nconc (magit-unstaged-files t)
+                           diff-hl--magit-unstaged-files)
+                    #'string<))))
          (unmodified-states '(up-to-date ignored unregistered)))
+    (setq diff-hl--magit-unstaged-files nil)
     (dolist (buf (buffer-list))
       (when (and (buffer-local-value 'diff-hl-mode buf)
                  (not (buffer-modified-p buf))
@@ -628,8 +692,63 @@ The value of this variable is a mode line template as in
     (diff-hl-dir-mode 1))))
 
 ;;;###autoload
+(defun diff-hl--global-turn-on ()
+  "Call `turn-on-diff-hl-mode' if the current major mode is applicable."
+  (when (cond ((eq diff-hl-global-modes t)
+               t)
+              ((eq (car-safe diff-hl-global-modes) 'not)
+               (not (memq major-mode (cdr diff-hl-global-modes))))
+              (t (memq major-mode diff-hl-global-modes)))
+    (turn-on-diff-hl-mode)))
+
+;;;###autoload
+(defun diff-hl-set-reference-rev (&optional rev)
+  "Set the reference revision globally to REV.
+When called interactively, REV is get from contexts:
+
+- In a log view buffer, it uses the revision of current entry.
+Call `vc-print-log' or `vc-print-root-log' first to open a log
+view buffer.
+- In a VC annotate buffer, it uses the revision of current line.
+- In other situations, get the revision name at point.
+
+Notice that this sets the reference revision globally, so in
+files from other repositories, `diff-hl-mode' will not highlight
+changes correctly, until you run `diff-hl-reset-reference-rev'.
+
+Also notice that this will disable `diff-hl-amend-mode' in
+buffers that enables it, since `diff-hl-amend-mode' overrides its
+effect."
+  (interactive)
+  (let* ((rev (or rev
+                  (and (equal major-mode 'vc-annotate-mode)
+                       (car (vc-annotate-extract-revision-at-line)))
+                  (log-view-current-tag)
+                  (thing-at-point 'symbol t))))
+    (if rev
+        (message "Set reference rev to %s" rev)
+      (user-error "Can't find a revision around point"))
+    (setq diff-hl-reference-revision rev))
+  (dolist (buf (buffer-list))
+    (with-current-buffer buf
+      (when diff-hl-mode
+        (when (bound-and-true-p diff-hl-amend-mode)
+          (diff-hl-amend-mode -1))
+        (diff-hl-update)))))
+
+;;;###autoload
+(defun diff-hl-reset-reference-rev ()
+  "Reset the reference revision globally to the most recent one."
+  (interactive)
+  (setq diff-hl-reference-revision nil)
+  (dolist (buf (buffer-list))
+    (with-current-buffer buf
+      (when diff-hl-mode
+        (diff-hl-update)))))
+
+;;;###autoload
 (define-globalized-minor-mode global-diff-hl-mode diff-hl-mode
-  turn-on-diff-hl-mode :after-hook (diff-hl-global-mode-change))
+  diff-hl--global-turn-on :after-hook (diff-hl-global-mode-change))
 
 (defun diff-hl-global-mode-change ()
   (unless global-diff-hl-mode

@@ -39,7 +39,7 @@ Currently only supports Git, Mercurial and Bazaar."
         (diff-hl-amend-setup)
         (add-hook 'after-revert-hook 'diff-hl-amend-setup nil t))
     (remove-hook 'after-revert-hook 'diff-hl-amend-setup t)
-    (setq-local diff-hl-reference-revision nil))
+    (kill-local-variable 'diff-hl-reference-revision))
   (when diff-hl-mode
     (diff-hl-update)))
 
@@ -57,7 +57,8 @@ Currently only supports Git, Mercurial and Bazaar."
 
 ;;;###autoload
 (define-globalized-minor-mode global-diff-hl-amend-mode diff-hl-amend-mode
-  turn-on-diff-hl-amend-mode)
+  turn-on-diff-hl-amend-mode
+  :group 'diff-hl)
 
 (defun turn-on-diff-hl-amend-mode ()
   "Turn on `diff-hl-amend-mode' in a buffer if appropriate."
