@@ -127,3 +127,12 @@ When using Magit 2.4 or newer, add this to your init script:
 (add-hook 'magit-pre-refresh-hook 'diff-hl-magit-pre-refresh)
 (add-hook 'magit-post-refresh-hook 'diff-hl-magit-post-refresh)
 ```
+
+Tramp
+-----
+
+`diff-hl` should just work with Tramp. But slow or high latency
+connections can cause performance problems. If you experience such
+issues, customize `diff-hl-disable-on-remote` to `t`. This will change
+the behavior of both `turn-on-diff-hl-mode` and `global-diff-hl-mode`
+(whichever you prefer to use).
