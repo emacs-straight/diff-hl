@@ -1,2 +1,2 @@
 ;; Generated package description from diff-hl.el  -*- no-byte-compile: t -*-
-(define-package "diff-hl" "1.10.0.0.20241012.214233" "Highlight uncommitted changes using VC" '((cl-lib "0.2") (emacs "25.1")) :commit "9e39dfc666ac03a8474b3a05da17e0c935894414" :authors '(("Dmitry Gutov" . "dmitry@gutov.dev")) :maintainer '("Dmitry Gutov" . "dmitry@gutov.dev") :keywords '("vc" "diff") :url "https://github.com/dgutov/diff-hl")
+(define-package "diff-hl" "1.10.0.0.20241128.233206" "Highlight uncommitted changes using VC" '((cl-lib "0.2") (emacs "25.1")) :commit "d9f54b512a0f583c6c3b51ce0c8ef62bffac7763" :authors '(("Dmitry Gutov" . "dmitry@gutov.dev")) :maintainer '("Dmitry Gutov" . "dmitry@gutov.dev") :keywords '("vc" "diff") :url "https://github.com/dgutov/diff-hl")
