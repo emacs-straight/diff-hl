@@ -147,6 +147,12 @@
            (set-default var value)
            (when on (global-diff-hl-mode 1)))))
 
+(defcustom diff-hl-bmp-max-width 16
+  "Maximum width of the fringe indicator bitmaps, in pixels.
+The bitmap width is decided by comparing this value with the current width
+of the fringe.  When the fringe is hidden, this value is also used."
+  :type 'integer)
+
 (defcustom diff-hl-highlight-revert-hunk-function
   #'diff-hl-revert-narrow-to-hunk
   "Function to emphasize the current hunk in `diff-hl-revert-hunk'.
@@ -230,8 +236,8 @@ It can be a relative expression as well, such as \"HEAD^\" with Git, or
                    (truncate (* (frame-char-height) spacing))
                  spacing)))
          (w (min (frame-parameter nil (intern (format "%s-fringe" diff-hl-side)))
-                 16))
-         (_ (when (zerop w) (setq w 16)))
+                 diff-hl-bmp-max-width))
+         (_ (when (zerop w) (setq w diff-hl-bmp-max-width)))
          (middle (make-vector h (expt 2 (1- w))))
          (ones (1- (expt 2 w)))
          (top (copy-sequence middle))
