@@ -119,8 +119,15 @@
 (defcustom diff-hl-fallback-to-margin t
   "Non-nil to use margin instead of fringe on non-graphic displays.
 
-This requires the corresponding margin width to be >0 already."
+This resizes the margin to 1 if it's not visible."
   :group 'diff-hl
+  :type 'boolean)
+
+(defcustom diff-hl-autohide-margin nil
+  "Non-nil to reset margin width to 0 when no indicators shown.
+
+When you use it, it's recommended to verify first that other enabled
+features don't use margin for their indicators."
   :type 'boolean)
 
 (defcustom diff-hl-highlight-function 'diff-hl-highlight-on-fringe
@@ -461,6 +468,8 @@ It can be a relative expression as well, such as \"HEAD^\" with Git, or
   (let ((changes (diff-hl-changes))
         (current-line 1))
     (diff-hl-remove-overlays)
+    (when (not changes)
+      (diff-hl--autohide-margin))
     (save-excursion
       (save-restriction
         (widen)
@@ -491,6 +500,16 @@ It can be a relative expression as well, such as \"HEAD^\" with Git, or
                 (overlay-put h 'insert-in-front-hooks hook)
                 (overlay-put h 'insert-behind-hooks hook)))))))))
 
+(defun diff-hl--autohide-margin ()
+  (let ((width-var (intern (format "%s-margin-width" diff-hl-side))))
+    (when (and diff-hl-autohide-margin
+               (> (symbol-value width-var) 0))
+      (if (eql (default-value width-var) 0)
+          (kill-local-variable width-var)
+        (set width-var 0))
+      (dolist (win (get-buffer-window-list))
+        (set-window-buffer win (current-buffer))))))
+
 (defvar-local diff-hl--modified-tick nil)
 
 (put 'diff-hl--modified-tick 'permanent-local t)
@@ -505,6 +524,8 @@ It can be a relative expression as well, such as \"HEAD^\" with Git, or
     (overlay-put o 'diff-hl t)
     (funcall diff-hl-highlight-function o type shape)
     o))
+
+(autoload 'diff-hl-highlight-on-margin "diff-hl-margin")
 
 (defun diff-hl-highlight-on-fringe (ovl type shape)
   (if (and diff-hl-fallback-to-margin
@@ -993,7 +1014,8 @@ The value of this variable is a mode line template as in
     (remove-hook 'magit-revert-buffer-hook 'diff-hl-update t)
     (remove-hook 'magit-not-reverted-hook 'diff-hl-update t)
     (remove-hook 'text-scale-mode-hook 'diff-hl-maybe-redefine-bitmaps t)
-    (diff-hl-remove-overlays)))
+    (diff-hl-remove-overlays)
+    (diff-hl--autohide-margin)))
 
 (defun diff-hl-after-checkin ()
   (let ((fileset (vc-deduce-fileset t)))
