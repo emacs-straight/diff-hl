@@ -645,8 +645,9 @@ contents as they are (or would be) after applying the changes in NEW."
     (diff-hl--update)))
 
 (defun diff-hl--update-buffer (buf)
-  (with-current-buffer buf
-    (diff-hl-update)))
+  (when (buffer-live-p buf)
+    (with-current-buffer buf
+      (diff-hl-update))))
 
 (defun diff-hl-with-editor-p (_dir)
   (bound-and-true-p with-editor-mode))
@@ -705,14 +706,23 @@ Return a list of line overlays used."
                 (overlay-put h 'insert-behind-hooks hook)))))))
     (nreverse ovls)))
 
+(defun diff-hl--no-query-on-exit (value)
+  (when-let* ((buf (and (stringp value) (get-buffer value)))
+              (proc (get-buffer-process buf)))
+    (set-process-query-on-exit-flag proc nil)))
+
 (defun diff-hl--update ()
   (let* ((orig (current-buffer))
-         (cc (diff-hl-changes)))
+         (cc (diff-hl-changes))
+         (working (assoc-default :working cc))
+         (reference (assoc-default :reference cc)))
+    (diff-hl--no-query-on-exit working)
+    (diff-hl--no-query-on-exit reference)
     (diff-hl--resolve
-     (assoc-default :working cc)
+     working
      (lambda (changes)
        (diff-hl--resolve
-        (assoc-default :reference cc)
+        reference
         (lambda (ref-changes)
           (let ((ref-changes (diff-hl-adjust-changes ref-changes changes))
                 reuse)
