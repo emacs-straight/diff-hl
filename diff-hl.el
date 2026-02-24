@@ -583,11 +583,6 @@ contents as they are (or would be) after applying the changes in NEW."
       (setq old (cdr old)))
     ref))
 
-(defun diff-hl-process-wait (buf)
-  (let ((proc (get-buffer-process buf)))
-    (while (process-live-p proc)
-      (accept-process-output proc 0.01))))
-
 (defun diff-hl-changes-from-buffer (buf)
   (with-current-buffer buf
     (let (res)
@@ -767,8 +762,9 @@ Return a list of line overlays used."
      ((eq (process-status proc) 'signal))
      ;; If a process is running, set the sentinel.
      ((eq (process-status proc) 'run)
-      (set-process-sentinel
-       proc
+      (add-function
+       :after
+       (process-sentinel proc)
        (lambda (proc _status)
          ;; Delegate to the parent cond for decision logic.
          (diff-hl--when-done buffer get-value callback proc))))
