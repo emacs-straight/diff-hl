@@ -605,15 +605,7 @@ contents as they are (or would be) after applying the changes in NEW."
     (let (res)
       (goto-char (point-min))
       (unless (eobp)
-        ;; TODO: When 27.1 is the minimum requirement, we can drop
-        ;; these bindings: that version, in addition to switching over
-        ;; called-interactively-p check, so refinement can't be
-        ;; triggered by code calling the navigation functions, only by
-        ;; direct interactive invocations.
-        (ignore-errors
-          (with-no-warnings
-            (let (diff-auto-refine-mode)
-              (diff-beginning-of-hunk t))))
+        (diff-beginning-of-hunk t)
         (while (looking-at diff-hunk-header-re-unified)
           (let ((line (string-to-number (match-string 3)))
                 (beg (point)))
@@ -744,20 +736,21 @@ Return a list of line overlays used."
             (let ((ref-changes (diff-hl-adjust-changes ref-changes changes))
                   (base (diff-hl--target-buffer orig)))
               (dolist (buf (buffer-list))
-                (when (and (buffer-live-p buf)
-                           (eq (diff-hl--target-buffer buf) base)
+                (when (and (eq (diff-hl--target-buffer buf) base)
                            (buffer-local-value 'diff-hl-mode buf))
                   (with-current-buffer buf
+                    (diff-hl-remove-overlays)
                     (let (reuse)
-                      (diff-hl-remove-overlays)
-                      (let ((diff-hl-highlight-function
-                             diff-hl-highlight-reference-function)
-                            (diff-hl-fringe-face-function
-                             diff-hl-fringe-reference-face-function))
-                        (setq reuse (diff-hl--update-overlays ref-changes nil)))
-                      (diff-hl--update-overlays changes reuse)
-                      (when (not (or changes ref-changes))
-                        (diff-hl--autohide-margin))))))))))))))
+                      (when ref-changes
+                        (let ((diff-hl-highlight-function
+                               diff-hl-highlight-reference-function)
+                              (diff-hl-fringe-face-function
+                               diff-hl-fringe-reference-face-function))
+                          (setq reuse (diff-hl--update-overlays ref-changes nil))))
+                      (when changes
+                        (diff-hl--update-overlays changes reuse)))
+                    (unless (or changes ref-changes)
+                      (diff-hl--autohide-margin)))))))))))))
 
 (defun diff-hl--resolve (value-or-buffer cb)
   (if (listp value-or-buffer)
@@ -1050,9 +1043,7 @@ that file, if it's present."
                 (when (eobp)
                   (with-current-buffer buffer (diff-hl-remove-overlays))
                   (user-error "Buffer is up-to-date"))
-                (with-no-warnings
-                  (let (diff-auto-refine-mode)
-                    (diff-hl-diff-skip-to line)))
+                (diff-hl-diff-skip-to line)
                 (setq m-end (diff-hl-split-away-changes 3))
                 (setq m-beg (point-marker))
                 (funcall diff-hl-highlight-revert-hunk-function m-end)
@@ -1062,9 +1053,8 @@ that file, if it's present."
                   (if (>= wbh (- end-line beg-line))
                       (recenter (/ (+ wbh (- beg-line end-line) 2) 2))
                     (recenter 1)))
-                (with-no-warnings
-                  (when diff-auto-refine-mode
-                    (diff-refine-hunk)))
+                (when (eq diff-refine 'navigation)
+                  (diff-refine-hunk))
                 (if diff-hl-ask-before-revert-hunk
                     (unless (yes-or-no-p (format "Revert current hunk in %s? "
                                                  file))
@@ -1207,9 +1197,7 @@ Only supported with Git."
           diff-hl-update-async)
       (diff-hl-diff-buffer-with-reference file dest-buffer nil 3))
     (with-current-buffer dest-buffer
-      (with-no-warnings
-        (let (diff-auto-refine-mode)
-          (diff-hl-diff-skip-to line)))
+      (diff-hl-diff-skip-to line)
       (let ((inhibit-read-only t))
         (diff-hl-split-away-changes 3)
         (save-excursion
